@@ -1,0 +1,267 @@
+---
+title: "Fermentation Equivalency Excercise"
+output:
+  html_document:
+    toc: yes
+  html_notebook:
+    theme: united
+    toc: yes
+---
+
+## Executive Summary
+
+## Overview
+
+```{r libraries, echo=FALSE, warning=FALSE, message=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(DT)
+library(lme4)
+library(car)
+library(sjPlot)
+library(sjlabelled)
+library(sjmisc)
+```
+
+* 3 strains, A, B and C, were run at Delta and Zymergen. At Delta, 6 replicates were run for each strain; at Zymergen, 9, 8 and 6 replicates were run for strain A, B and C, respectively.
+
+```{r readdata, warning=FALSE, message=FALSE}
+data <- read_csv("~/Downloads/Delta_Zymergen Equivalency Data Scrubbed_20180605.csv")
+data.df <- data.frame(Culture = data$Culture, 
+                      ExperimentID = data$`Experiment ID`,
+                      TankID = data$`Tank ID`,
+                      Site = data$Site,
+                      Is_Zymergen = ifelse(data$Site=="Zymergen", "Yes", "No"),
+                      Productivity = data$`Productivity [g/L/hr]`, 
+                      Yield = data$`Yield [%]`,
+                      stringsAsFactors = default.stringsAsFactors())
+
+table(data.df$Culture, data.df$Site)
+
+DT::datatable(data.df)
+```
+
+* Client's yield and productivity values are rounded to the second decimal; both values at Zymergen are not rounded. 
+
+### Data visualization
+
+#### Distribution of Yield and Productivity
+
+The following plots may be duplicated. 
+
+```{r visualize_yield_prod, fig.height=5, fig.width=11, fig.align="center"}
+p1 <- ggplot(data.df, aes(Site, Yield)) + 
+  geom_boxplot() +
+  geom_jitter(aes(colour = Culture))
+
+prod1 <- ggplot(data.df, aes(Site, Productivity)) + 
+  geom_boxplot() +
+  geom_jitter(aes(colour = Culture))
+
+grid.arrange(p1, prod1, nrow = 1)
+```
+
+
+```{r dist, fig.height=6, fig.width=11}
+p4 <- ggplot(data.df, aes(Culture, Yield, color=Site)) +
+geom_boxplot() + theme(legend.position="bottom")
+
+p5 <- ggplot(data.df, aes(Culture, Productivity, color=Site)) +
+geom_boxplot() + theme(legend.position="bottom")
+
+grid.arrange(p4, p5, nrow = 1)
+
+p6 <- ggplot(data.df, aes(Culture, Yield, color=Site)) +
+geom_jitter(width = 0.25) + theme(legend.position="bottom")
+
+p7 <- ggplot(data.df, aes(Culture, Productivity, color=Site)) +
+geom_jitter(width = 0.25) + theme(legend.position="bottom")
+
+grid.arrange(p6, p7, nrow = 1)
+
+```
+
+#### Tank performance
+
+```{r visualize_yield2, fig.height=5, fig.width=11}
+p2 <- ggplot(data.df, aes(Site, Yield)) + 
+  geom_boxplot() +
+  geom_jitter(aes(colour = TankID))
+
+p3 <- ggplot(data.df %>% dplyr::filter(Site == "Zymergen"), aes(TankID, Yield)) + 
+  geom_boxplot() +
+  geom_jitter(aes(colour = Culture))
+
+grid.arrange(p2, p3, nrow = 1, top = "", 
+             bottom = textGrob(
+    "Client has no tank ID",
+    gp = gpar(fontface = 3, fontsize = 9),
+    hjust = 1,
+    x = 1
+  )
+)
+
+```
+
+```{r visualize_prod2, fig.height=6, fig.width=11}
+
+prod2 <- ggplot(data.df, aes(Site, Productivity)) + 
+  geom_boxplot() +
+  geom_jitter(aes(colour = TankID))
+
+prod3 <- ggplot(data.df %>% dplyr::filter(Site == "Zymergen"), 
+                aes(TankID, Productivity)) + 
+  geom_boxplot() +
+  geom_jitter(aes(colour = Culture))
+
+grid.arrange(
+  prod2,
+  prod3,
+  nrow = 1,
+  top = "",
+  bottom = textGrob(
+    "Client has no tank ID",
+    gp = gpar(fontface = 3, fontsize = 9),
+    hjust = 1,
+    x = 1
+  )
+)
+
+```
+
+
+## Equivalency Test
+
+According to https://wiki.zymergen.net/display/DataScience/Fermentation+Equivalency, there are two model options to test whether Delta and Zymergen's fermentation process is equivalent in Zymergen Data Science team.
+
+### Option 1: Means Performance Model
+
+We compute the threshold for the RMSE of the simple linear model fit between Zymergen and client data.  For self containment and to specify that step the process would be:
+
+1. Measure the performance parameter of interest (e.g. Yield and Productivity) in bench scale fermentation tanks at client site for a set of ladder strains, 3 strains in this case study.
+
+2. Compute the standard errors of the means for each strain run (separately for each titer value of interest), take the mean of these values and multiply by 2 so 2*mean(standard errors of the strain means).  This value is used as a threshold that RMSE from step 3 is compared with.
+
+```{r se}
+se_mat <- data.df %>% group_by(Culture) %>% 
+  dplyr::summarise(Yield_se = sd(Yield), Prod_se = sd(Productivity))
+
+DT::datatable(se_mat, rownames = FALSE) %>%
+  formatRound(c('Yield_se', 'Prod_se'), 4)
+
+2*mean(se_mat$Yield_se)
+2*mean(se_mat$Prod_se)
+# Compute the average variability, and use that to compute (2*(Avg Variability)) / sqrt(N)
+# var_mat <- data.df %>% group_by(Culture) %>% 
+#  dplyr::summarise(Yield_var = var(Yield), Prod_var = var(Productivity))
+
+# DT::datatable(var_mat, rownames = FALSE) 
+# 2*mean(var_mat$Yield_var)/sqrt(3)
+
+# 2*mean(var_mat$Prod_var)/sqrt(3)
+```
+
+3. Compute the average titers of interest for each strain at each site, then fit a simple linear regression using Zymergen as independent variable and Delta as the dependent variable.
+
+```{r lmfit}
+mat = data.df %>% 
+  group_by(Culture, Site) %>% 
+  dplyr::summarise(Yield_avg = mean(Yield), Prod_avg = mean(Productivity))
+
+z_mat <- mat %>% dplyr::filter(Site == "Zymergen") %>% dplyr::arrange(Culture)
+d_mat <- mat %>% dplyr::filter(Site == "Delta") %>% dplyr::arrange(Culture)
+DT::datatable(z_mat, rownames = FALSE)
+DT::datatable(d_mat, rownames = FALSE)
+fit_yield <- lm(d_mat$Yield_avg ~ z_mat$Yield_avg)
+fit_prod <- lm(d_mat$Prod_avg ~ z_mat$Prod_avg)
+
+rmse <- function(fit) sqrt(mean(summary(fit)$residuals^2))
+rmse(fit_prod)
+rmse(fit_yield)
+```
+
+
+If the RMSE of the fit is less than the threshold defined in step 2, then the process is assumed to be equivalent for both yield and productivity.
+
+```{r compare}
+paste0("If ", rmse(fit_yield), " < ", 2*mean(se_mat$Yield_se), ", yield is equivalant!")
+paste0("If ", rmse(fit_prod), " < ", 2*mean(se_mat$Prod_se), ", productivity is equivalant!")
+
+```
+
+### Option 2: Multilevel Model
+
+This model attempts to fit a linear model like an least squares regression, but it allows for effects to vary between groups.  Thus, I fit a mixed effects linear model 
+
+> Yield ~ Intercept + Is_Zymergen + (Is_Zymergen | Strain). 
+
+Which is interpreted as:
+
+* The specific measurement value, Yield.
+
+* A coefficient term for the global mean of the data, Intercept.
+
+* A coefficient term for the site bias, Is_Zymergen.
+
+* Multiple coefficient terms for the site bias that is allowed to vary by strain, (Is Zymergen | Strain).
+
+```{r randomeffectmodel}
+yield_model <- lmer(Yield ~ 1 + Is_Zymergen + (Is_Zymergen|Culture), data = data.df, REML = FALSE)
+
+### The fixed effects:
+summary(yield_model)$coefficients
+
+### The random effects:
+ranef(yield_model)
+
+### test whether site/Is_Zymergen effect is equal to zero
+Anova(yield_model)
+
+### plot random effects
+plot_model(yield_model, type = c("re"), show.values = TRUE, value.offset = .2)
+
+#plot_model(yield_model, type = "pred", vars=c('Is_Zymergen', 'Culture'), facet.grid = FALSE)
+
+```
+
+One can see the site effect is estimated -0.69 % yield, meaning that in the event of running the process at Zymergen one would expect the yield to be reduced by about 0.69%. This decrease is not statistically significant according to Anova test p-value 0.1739.
+
+```{r randomeffectmodel2}
+prod_model <- lmer(Productivity ~ 1 + Is_Zymergen + (Is_Zymergen|Culture), data = data.df, REML = FALSE)
+
+### fixed effects
+summary(prod_model)$coefficients
+
+### The random effects:
+ranef(prod_model)
+
+### test whether site/Is_Zymergen effect is equal to zero
+Anova(prod_model)
+
+### plot random effects
+plot_model(prod_model, type = c("re"), show.values = TRUE, value.offset = .2)
+
+```
+
+One can see the site effect is estimated around 0.07, meaning that in the event of running the process at Zymergen one would expect the productivity to be improved by approximately 0.07 g/L/hr. This increase is not statistically significant according to Anova test p-value 0.2432.
+
+```{r predictYield}
+ppyield <- ggplot(data.df, aes(x = Is_Zymergen, y = Yield, group = Culture, colour = Culture)) +
+  geom_jitter(width = 0.25, size=2, alpha = 0.5) +
+  geom_line(data = fortify(yield_model), aes(x = Is_Zymergen, y = .fitted, group = Culture, colour = Culture)) 
+print(ppyield)
+
+```
+
+```{r predictProd}
+ppprod <- ggplot(data.df, aes(x = Is_Zymergen, y = Productivity, 
+                              group = Culture, colour = Culture)) +
+  geom_jitter(width = 0.25, size=2, alpha = 0.5) +
+  geom_line(data = fortify(prod_model), aes(x = Is_Zymergen, y = .fitted, 
+                                            group = Culture, colour = Culture)) 
+print(ppprod)
+
+```
